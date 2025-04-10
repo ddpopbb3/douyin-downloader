@@ -19,8 +19,9 @@ link:
   # -  https://v.douyin.com/iRGukBBk/
   # -  https://v.douyin.com/iRGuJcW8/
   # -  https://v.douyin.com/iRGHQY5t/
+  - https://v.douyin.com/6k190Kcxwk0/
   # - https://www.douyin.com/user/MS4wLjABAAAAXrGDowccDgJnarm2l95p80ojY5UpD-4VE_4WJwXcjvAMzQ79Ol1xizyLH8W3lgPX
-  - https://www.douyin.com/user/MS4wLjABAAAA6O7EZyfDRYXxJrUTpf91K3tmB4rBROkAw-nYMfld8ss
+  # - https://www.douyin.com/user/MS4wLjABAAAA6O7EZyfDRYXxJrUTpf91K3tmB4rBROkAw-nYMfld8ss
 
 # 下载保存位置, 默认为当前目录下的Downloaded文件夹
 # 可以修改为任意有效路径，例如: "D:/Videos/DouYin/" 或 "./MyDownloads/"
@@ -45,8 +46,8 @@ json: True
 
 
 # 下载时间范围
-start_time: "2024-12-30"
-end_time: "2024-12-30"
+start_time: "2024-05-08"
+end_time: "2024-10-09"
 
 
 folderstyle: True # True -> 每个视频是一个单独的文件夹; False -> 所有视频共用一个文件夹
@@ -68,8 +69,7 @@ folderstyle: True # True -> 每个视频是一个单独的文件夹; False -> �
 # 可选
 mode:
   - post
-  - like
-  - mix
+
 
 # 下载作品个数设置
 # 可选

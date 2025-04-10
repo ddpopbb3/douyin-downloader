@@ -122,7 +122,7 @@ class Douyin(object):
     # @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def getAwemeInfo(self, aweme_id: str) -> dict:
         """获取作品信息（带重试机制）"""
-        retries = 5  # 增加重试次数
+        retries = 8  # 进一步增加重试次数
         for attempt in range(retries):
             try:
                 logger.info(f'[  提示  ]:正在请求的作品 id = {aweme_id} (尝试 {attempt+1}/{retries})')
@@ -130,7 +130,7 @@ class Douyin(object):
                     return {}
 
                 # 增加随机延迟，避免请求过于规律被限制
-                jitter = random.uniform(1.5, 4.0)  # 进一步增加随机性范围和延迟时间
+                jitter = random.uniform(1.5, 4.0) * (1 + (attempt * 0.2))  # 随着重试次数增加延迟
                 time.sleep(jitter)  # 请求前随机延迟
 
                 # 构建请求URL
@@ -148,15 +148,28 @@ class Douyin(object):
                 headers['sec-fetch-dest'] = 'empty'
                 headers['sec-fetch-mode'] = 'cors'
                 headers['sec-fetch-site'] = 'same-origin'
-                # 添加随机Cookie值
-                headers['Cookie'] = f"{headers.get('Cookie', '')};msToken={utils.generate_random_str(107)};"
+                headers['Origin'] = 'https://www.douyin.com'
+                
+                # 生成新的随机Cookie值
+                new_msToken = utils.generate_random_str(107)
+                headers['Cookie'] = f"{headers.get('Cookie', '')};msToken={new_msToken};"
+                
+                # 尝试使用不同的User-Agent
+                if attempt > 0 and attempt % 2 == 0:
+                    user_agents = [
+                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    ]
+                    headers['User-Agent'] = random.choice(user_agents)
                 
                 # 使用session保持连接
                 session = requests.Session()
                 
                 try:
-                    # 增加超时参数和错误处理
-                    response = session.get(url=jx_url, headers=headers, timeout=15)
+                    # 增加超时参数和错误处理，随着重试次数增加超时时间
+                    timeout = 15 + (attempt * 5)
+                    response = session.get(url=jx_url, headers=headers, timeout=timeout)
                     
                     # 检查HTTP状态码
                     if response.status_code != 200:
@@ -166,24 +179,43 @@ class Douyin(object):
                     # 检查响应内容是否为空
                     if not response.text or response.text.isspace():
                         logger.warning("收到空响应")
-                        # 尝试使用备用方法获取数据
-                        backup_url = f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp&version_code=170400&version_name=17.4.0"
-                        backup_url = backup_url + "&" + utils.getXbogus(f'aweme_id={aweme_id}&device_platform=webapp&version_code=170400&version_name=17.4.0')
-                        logger.info(f"尝试使用备用URL获取数据")
+                        # 尝试使用多个备用URL和参数
+                        backup_urls = [
+                            f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp&version_code=170400&version_name=17.4.0",
+                            f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp&aid=6383",
+                            f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp"
+                        ]
                         
-                        # 修改User-Agent为移动设备
-                        mobile_headers = copy.deepcopy(headers)
-                        mobile_headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
-                        mobile_headers['sec-ch-ua-mobile'] = '?1'
-                        mobile_headers['sec-ch-ua-platform'] = '"iOS"'
+                        backup_response = None
+                        for i, backup_url in enumerate(backup_urls):
+                            try:
+                                logger.info(f"尝试使用备用URL {i+1}/{len(backup_urls)}")
+                                # 添加X-Bogus参数
+                                query_part = backup_url.split('?')[1]
+                                backup_url_with_xbogus = backup_url + "&" + utils.getXbogus(query_part)
+                                
+                                # 修改User-Agent，交替使用移动设备和桌面设备
+                                backup_headers = copy.deepcopy(headers)
+                                if i % 2 == 0:
+                                    backup_headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+                                    backup_headers['sec-ch-ua-mobile'] = '?1'
+                                    backup_headers['sec-ch-ua-platform'] = '"iOS"'
+                                
+                                # 添加随机延迟
+                                time.sleep(random.uniform(1.0, 2.0))
+                                
+                                temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout)
+                                if temp_response.status_code == 200 and temp_response.text and not temp_response.text.isspace():
+                                    backup_response = temp_response
+                                    logger.info(f"备用URL {i+1} 请求成功")
+                                    break
+                            except Exception as e:
+                                logger.warning(f"备用URL {i+1} 请求失败: {str(e)}")
                         
-                        backup_response = session.get(url=backup_url, headers=mobile_headers, timeout=15)
-                        
-                        if backup_response.status_code == 200 and backup_response.text and not backup_response.text.isspace():
+                        if backup_response:
                             response = backup_response
-                            logger.info("备用URL请求成功")
                         else:
-                            raise ValueError("空响应且备用请求失败")
+                            raise ValueError("所有备用URL请求均失败")
                     
                     # 尝试解析JSON
                     try:
@@ -275,6 +307,7 @@ class Douyin(object):
         awemeList = []
         total_fetched = 0
         filtered_count = 0
+        max_retries = 5  # 最大重试次数
         
         with Progress(
             SpinnerColumn(),
@@ -291,27 +324,92 @@ class Douyin(object):
             )
             
             while True:
-                try:
-                    # 构建请求URL
-                    if mode == "post":
-                        url = self.urls.USER_POST + utils.getXbogus(
-                            f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383')
-                    elif mode == "like":
-                        url = self.urls.USER_FAVORITE_A + utils.getXbogus(
-                            f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383')
-                    else:
-                        self.console.print("[red]❌ 模式选择错误，仅支持post、like[/]")
-                        return None
+                retry_count = 0
+                success = False
+                
+                while retry_count < max_retries and not success:
+                    try:
+                        # 构建请求URL
+                        if mode == "post":
+                            url = self.urls.USER_POST + utils.getXbogus(
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383')
+                        elif mode == "like":
+                            url = self.urls.USER_FAVORITE_A + utils.getXbogus(
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383')
+                        else:
+                            self.console.print("[red]❌ 模式选择错误，仅支持post、like[/]")
+                            return None
 
-                    # 发送请求
-                    res = requests.get(url=url, headers=douyin_headers)
-                    datadict = json.loads(res.text)
-                    
-                    # 处理返回数据
-                    if not datadict or datadict.get("status_code") != 0:
-                        self.console.print(f"[red]❌ API请求失败: {datadict.get('status_msg', '未知错误')}[/]")
-                        break
+                        # 添加随机延迟，避免请求过于规律被限制
+                        jitter = random.uniform(0.5, 2.0) * (retry_count + 1)
+                        if retry_count > 0:
+                            logger.info(f"第{retry_count+1}次重试，等待{jitter:.1f}秒...")
+                            time.sleep(jitter)
+
+                        # 使用session保持连接
+                        session = requests.Session()
                         
+                        # 更新请求头，添加更多浏览器特征
+                        headers = copy.deepcopy(douyin_headers)
+                        headers['Accept'] = 'application/json, text/plain, */*'
+                        headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
+                        headers['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120"'
+                        headers['sec-ch-ua-mobile'] = '?0'
+                        headers['sec-ch-ua-platform'] = '"macOS"'
+                        headers['Referer'] = 'https://www.douyin.com/'
+                        headers['Origin'] = 'https://www.douyin.com'
+                        
+                        # 生成新的随机Cookie值
+                        new_msToken = utils.generate_random_str(107)
+                        headers['Cookie'] = f"{headers.get('Cookie', '')};msToken={new_msToken};"
+                        
+                        # 尝试使用不同的User-Agent
+                        if retry_count > 0 and retry_count % 2 == 0:
+                            headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        
+                        # 增加超时参数
+                        res = session.get(url=url, headers=headers, timeout=15)
+                        
+                        # 检查HTTP状态码
+                        if res.status_code != 200:
+                            logger.warning(f"HTTP请求失败: 状态码 {res.status_code}")
+                            raise RequestException(f"HTTP状态码: {res.status_code}")
+                        
+                        # 检查响应内容是否为空
+                        if not res.text or res.text.isspace():
+                            logger.warning("收到空响应")
+                            raise ValueError("空响应")
+                        
+                        # 尝试解析JSON
+                        datadict = json.loads(res.text)
+                        
+                        # 处理返回数据
+                        if not datadict or datadict.get("status_code") != 0:
+                            status_msg = datadict.get('status_msg', '未知错误')
+                            logger.warning(f"API返回错误: {status_msg}")
+                            raise ValueError(f"API错误: {status_msg}")
+                            
+                        # 如果执行到这里，说明请求成功
+                        success = True
+                        
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON解析失败: {str(e)}")
+                        logger.debug(f"响应内容前100个字符: {res.text[:100] if hasattr(res, 'text') else '无响应内容'}")
+                        retry_count += 1
+                    except (RequestException, ValueError) as e:
+                        logger.error(f"请求失败: {str(e)}")
+                        retry_count += 1
+                    except Exception as e:
+                        logger.error(f"未预期的错误: {str(e)}")
+                        retry_count += 1
+                
+                # 如果所有重试都失败了
+                if not success:
+                    self.console.print(f"[red]❌ 网络请求失败: 已重试{max_retries}次[/]")
+                    break
+                    
+                # 请求成功，处理数据
+                try:
                     current_count = len(datadict["aweme_list"])
                     total_fetched += current_count
                     
@@ -507,18 +605,90 @@ class Douyin(object):
                 total=None
             )
 
+            max_retries = 5  # 最大重试次数
+            
             while True:  # 外层循环
+                retry_count = 0
+                success = False
+                
+                while retry_count < max_retries and not success:
+                    try:
+                        url = self.urls.USER_MIX + utils.getXbogus(
+                            f'mix_id={mix_id}&cursor={cursor}&count={count}&device_platform=webapp&aid=6383')
+
+                        # 添加随机延迟，避免请求过于规律被限制
+                        jitter = random.uniform(0.5, 2.0) * (retry_count + 1)
+                        if retry_count > 0:
+                            logger.info(f"第{retry_count+1}次重试，等待{jitter:.1f}秒...")
+                            time.sleep(jitter)
+                        
+                        # 使用session保持连接
+                        session = requests.Session()
+                        # 更新请求头，添加更多浏览器特征
+                        headers = copy.deepcopy(douyin_headers)
+                        headers['Accept'] = 'application/json, text/plain, */*'
+                        headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
+                        headers['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120"'
+                        headers['sec-ch-ua-mobile'] = '?0'
+                        headers['sec-ch-ua-platform'] = '"macOS"'
+                        headers['Referer'] = 'https://www.douyin.com/'
+                        headers['Origin'] = 'https://www.douyin.com'
+                        
+                        # 生成新的随机Cookie值
+                        new_msToken = utils.generate_random_str(107)
+                        headers['Cookie'] = f"{headers.get('Cookie', '')};msToken={new_msToken};"
+                        
+                        # 尝试使用不同的User-Agent
+                        if retry_count > 0 and retry_count % 2 == 0:
+                            headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        
+                        # 增加超时参数，随着重试次数增加超时时间
+                        timeout = 15 + (retry_count * 5)
+                        res = session.get(url=url, headers=headers, timeout=timeout)
+                        
+                        # 检查HTTP状态码
+                        if res.status_code != 200:
+                            logger.warning(f"HTTP请求失败: 状态码 {res.status_code}")
+                            raise RequestException(f"HTTP状态码: {res.status_code}")
+                        
+                        # 检查响应内容是否为空
+                        if not res.text or res.text.isspace():
+                            logger.warning("收到空响应")
+                            raise ValueError("空响应")
+                        
+                        # 尝试解析JSON
+                        datadict = json.loads(res.text)
+                        
+                        if not datadict:
+                            logger.warning("获取到空数据字典")
+                            raise ValueError("空数据字典")
+                            
+                        # 检查API返回状态
+                        if datadict.get("status_code") != 0:
+                            status_msg = datadict.get('status_msg', '未知错误')
+                            logger.warning(f"API返回错误: {status_msg}")
+                            raise ValueError(f"API错误: {status_msg}")
+                            
+                        # 如果执行到这里，说明请求成功
+                        success = True
+                        
+                    except json.JSONDecodeError as e:
+                        logger.error(f"JSON解析失败: {str(e)}")
+                        logger.debug(f"响应内容前100个字符: {res.text[:100] if hasattr(res, 'text') else '无响应内容'}")
+                        retry_count += 1
+                    except (RequestException, ValueError) as e:
+                        logger.error(f"请求失败: {str(e)}")
+                        retry_count += 1
+                    except Exception as e:
+                        logger.error(f"未预期的错误: {str(e)}")
+                        retry_count += 1
+                
+                # 如果所有重试都失败了
+                if not success:
+                    self.console.print(f"[red]❌ 网络请求失败: 已重试{max_retries}次[/]")
+                    break
+                
                 try:
-                    url = self.urls.USER_MIX + utils.getXbogus(
-                        f'mix_id={mix_id}&cursor={cursor}&count={count}&device_platform=webapp&aid=6383')
-
-                    res = requests.get(url=url, headers=douyin_headers)
-                    datadict = json.loads(res.text)
-
-                    if not datadict:
-                        self.console.print("[red]❌ 获取数据失败[/]")
-                        break
-
                     for aweme in datadict["aweme_list"]:
                         create_time = time.strftime(
                             "%Y-%m-%d",
