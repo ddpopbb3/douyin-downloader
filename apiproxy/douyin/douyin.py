@@ -7,6 +7,7 @@ import requests
 import json
 import time
 import copy
+import random
 # from tenacity import retry, stop_after_attempt, wait_exponential
 from typing import Tuple, Optional
 from requests.exceptions import RequestException
@@ -18,10 +19,13 @@ from apiproxy.douyin.urls import Urls
 from apiproxy.douyin.result import Result
 from apiproxy.douyin.database import DataBase
 from apiproxy.common import utils
-from utils import logger
+import logging
 
 # 创建全局console实例
 console = Console()
+
+# 创建logger实例
+logger = logging.getLogger("douyin_downloader")
 
 class Douyin(object):
 
@@ -118,55 +122,126 @@ class Douyin(object):
     # @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def getAwemeInfo(self, aweme_id: str) -> dict:
         """获取作品信息（带重试机制）"""
-        retries = 3
+        retries = 5  # 增加重试次数
         for attempt in range(retries):
             try:
-                logger.info(f'[  提示  ]:正在请求的作品 id = {aweme_id}')
+                logger.info(f'[  提示  ]:正在请求的作品 id = {aweme_id} (尝试 {attempt+1}/{retries})')
                 if aweme_id is None:
                     return {}
 
-                start = time.time()  # 开始时间
-                while True:
-                    # 接口不稳定, 有时服务器不返回数据, 需要重新获取
-                    try:
-                        # 单作品接口返回 'aweme_detail'
-                        # 主页作品接口返回 'aweme_list'->['aweme_detail']
-                        jx_url = self.urls.POST_DETAIL + utils.getXbogus(
-                            f'aweme_id={aweme_id}&device_platform=webapp&aid=6383')
+                # 增加随机延迟，避免请求过于规律被限制
+                jitter = random.uniform(1.5, 4.0)  # 进一步增加随机性范围和延迟时间
+                time.sleep(jitter)  # 请求前随机延迟
 
-                        raw = requests.get(url=jx_url, headers=douyin_headers).text
-                        datadict = json.loads(raw)
-                        if datadict is not None and datadict["status_code"] == 0:
-                            break
-                    except Exception as e:
-                        end = time.time()  # 结束时间
-                        if end - start > self.timeout:
-                            logger.warning(f"重复请求该接口{self.timeout}s, 仍然未获取到数据")
-                            return {}
-
-
-                # 清空self.awemeDict
-                self.result.clearDict(self.result.awemeDict)
-
-                # 默认为视频
-                awemeType = 0
+                # 构建请求URL
+                jx_url = self.urls.POST_DETAIL + utils.getXbogus(
+                    f'aweme_id={aweme_id}&device_platform=webapp&aid=6383')
+                
+                # 更新请求头，添加更多浏览器特征
+                headers = copy.deepcopy(douyin_headers)
+                headers['Accept'] = 'application/json, text/plain, */*'
+                headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
+                headers['Referer'] = f'https://www.douyin.com/video/{aweme_id}'
+                headers['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120"'
+                headers['sec-ch-ua-mobile'] = '?0'
+                headers['sec-ch-ua-platform'] = '"macOS"'
+                headers['sec-fetch-dest'] = 'empty'
+                headers['sec-fetch-mode'] = 'cors'
+                headers['sec-fetch-site'] = 'same-origin'
+                # 添加随机Cookie值
+                headers['Cookie'] = f"{headers.get('Cookie', '')};msToken={utils.generate_random_str(107)};"
+                
+                # 使用session保持连接
+                session = requests.Session()
+                
                 try:
-                    # datadict['aweme_detail']["images"] 不为 None 说明是图集
-                    if datadict['aweme_detail']["images"] is not None:
-                        awemeType = 1
+                    # 增加超时参数和错误处理
+                    response = session.get(url=jx_url, headers=headers, timeout=15)
+                    
+                    # 检查HTTP状态码
+                    if response.status_code != 200:
+                        logger.warning(f"HTTP请求失败: 状态码 {response.status_code}")
+                        raise RequestException(f"HTTP状态码: {response.status_code}")
+                    
+                    # 检查响应内容是否为空
+                    if not response.text or response.text.isspace():
+                        logger.warning("收到空响应")
+                        # 尝试使用备用方法获取数据
+                        backup_url = f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp&version_code=170400&version_name=17.4.0"
+                        backup_url = backup_url + "&" + utils.getXbogus(f'aweme_id={aweme_id}&device_platform=webapp&version_code=170400&version_name=17.4.0')
+                        logger.info(f"尝试使用备用URL获取数据")
+                        
+                        # 修改User-Agent为移动设备
+                        mobile_headers = copy.deepcopy(headers)
+                        mobile_headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+                        mobile_headers['sec-ch-ua-mobile'] = '?1'
+                        mobile_headers['sec-ch-ua-platform'] = '"iOS"'
+                        
+                        backup_response = session.get(url=backup_url, headers=mobile_headers, timeout=15)
+                        
+                        if backup_response.status_code == 200 and backup_response.text and not backup_response.text.isspace():
+                            response = backup_response
+                            logger.info("备用URL请求成功")
+                        else:
+                            raise ValueError("空响应且备用请求失败")
+                    
+                    # 尝试解析JSON
+                    try:
+                        datadict = json.loads(response.text)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"JSON解析失败: {str(e)}")
+                        logger.debug(f"响应内容前100个字符: {response.text[:100]}")
+                        raise
+                    
+                    # 验证API返回状态
+                    if datadict is None or datadict.get("status_code") != 0:
+                        status_msg = datadict.get("status_msg", "未知错误") if datadict else "空数据"
+                        logger.warning(f"API返回错误: {status_msg}")
+                        raise ValueError(f"API错误: {status_msg}")
+                    
+                    # 验证是否包含必要的数据
+                    if 'aweme_detail' not in datadict:
+                        logger.warning("API响应中缺少aweme_detail字段")
+                        raise KeyError("缺少aweme_detail字段")
+                    
+                    # 清空self.awemeDict
+                    self.result.clearDict(self.result.awemeDict)
+                    
+                    # 判断作品类型
+                    awemeType = 0  # 默认为视频
+                    if datadict['aweme_detail'].get("images") is not None:
+                        awemeType = 1  # 图集
+                    
+                    # 转换成我们自己的格式
+                    self.result.dataConvert(awemeType, self.result.awemeDict, datadict['aweme_detail'])
+                    logger.info(f"成功获取作品信息: ID={aweme_id}")
+                    return self.result.awemeDict
+                    
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    # 特定错误处理
+                    logger.warning(f"处理响应时出错: {str(e)}")
+                    # 不立即返回，继续外层重试
+                except RequestException as e:
+                    # 网络请求错误
+                    logger.warning(f"网络请求失败: {str(e)}")
+                    # 不立即返回，继续外层重试
                 except Exception as e:
-                    logger.warning("接口中未找到 images")
-
-                # 转换成我们自己的格式
-                self.result.dataConvert(awemeType, self.result.awemeDict, datadict['aweme_detail'])
-
-                return self.result.awemeDict
-            except RequestException as e:
-                logger.warning(f"请求失败（尝试 {attempt+1}/{retries}）: {str(e)}")
-                time.sleep(2 ** attempt)
-            except KeyError as e:
-                logger.error(f"响应数据格式异常: {str(e)}")
-                break
+                    # 其他未预期的错误
+                    logger.warning(f"未预期的错误: {str(e)}")
+                    # 不立即返回，继续外层重试
+                
+            except Exception as e:
+                # 外层异常捕获
+                logger.error(f"获取作品信息失败 (尝试 {attempt+1}/{retries}): {str(e)}")
+            
+            # 指数退避等待，但添加随机性
+            base_wait_time = min(30, 5 * (2 ** attempt))  # 基础等待时间
+            jitter = random.uniform(0.8, 1.2)  # 添加20%的随机波动
+            wait_time = base_wait_time * jitter
+            logger.warning(f"等待{wait_time:.1f}秒后重试...")
+            time.sleep(wait_time)
+                
+        logger.error(f"已达到最大重试次数({retries}次)，无法获取作品信息")
         return {}
 
     # 传入 url 支持 https://www.iesdouyin.com 与 https://v.douyin.com

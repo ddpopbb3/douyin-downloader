@@ -65,10 +65,26 @@ class Utils(object):
     def getttwid(self):
         url = 'https://ttwid.bytedance.com/ttwid/union/register/'
         data = '{"region":"cn","aid":1768,"needFid":false,"service":"www.ixigua.com","migrate_info":{"ticket":"","source":"node"},"cbUrlProtocol":"https","union":true}'
-        res = requests.post(url=url, data=data)
-
-        for i, j in res.cookies.items():
-            return j
+        
+        # 禁用代理设置，解决代理连接问题
+        try:
+            # 设置较短的超时时间，避免长时间等待
+            res = requests.post(url=url, data=data, proxies={'http': None, 'https': None}, timeout=10)
+            for i, j in res.cookies.items():
+                return j
+        except requests.exceptions.ProxyError:
+            # 代理错误，尝试不使用代理直接连接
+            try:
+                res = requests.post(url=url, data=data, proxies=None, timeout=10)
+                for i, j in res.cookies.items():
+                    return j
+            except Exception as e:
+                print(f"获取ttwid失败: {str(e)}")
+                return ""  # 返回空字符串作为默认值
+        except requests.exceptions.RequestException as e:
+            # 其他请求错误
+            print(f"获取ttwid失败: {str(e)}")
+            return ""  # 返回空字符串作为默认值
 
     def getXbogus(self, payload, form='', ua=apiproxy.ua):
         xbogus = self.get_xbogus(payload, ua, form)

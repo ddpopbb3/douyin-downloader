@@ -8,6 +8,7 @@ import sys
 import json
 import yaml
 import time
+import random
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 from pathlib import Path
@@ -184,6 +185,12 @@ def yamlConfig():
         # 特殊处理end_time
         if configDict.get("end_time") == "now":
                 configModel["end_time"] = time.strftime("%Y-%m-%d", time.localtime())
+        
+        # 特殊处理path
+        if configDict.get("path"):
+            # 确保路径是绝对路径
+            path = os.path.abspath(configDict["path"])
+            configModel["path"] = path
             
     except FileNotFoundError:
         douyin_logger.warning("未找到配置文件config.yml")
@@ -233,9 +240,19 @@ def main():
         douyin_headers["Cookie"] = configModel["cookie"]
 
     # 路径处理
+    # 确保路径是绝对路径
     configModel["path"] = os.path.abspath(configModel["path"])
-    os.makedirs(configModel["path"], exist_ok=True)
-    douyin_logger.info(f"数据保存路径 {configModel['path']}")
+    # 确保目录存在
+    try:
+        os.makedirs(configModel["path"], exist_ok=True)
+        douyin_logger.info(f"数据保存路径 {configModel['path']}")
+    except Exception as e:
+        douyin_logger.error(f"创建保存路径失败: {str(e)}")
+        # 如果创建失败，使用当前目录下的Downloaded文件夹作为备选
+        backup_path = os.path.join(os.getcwd(), "Downloaded")
+        os.makedirs(backup_path, exist_ok=True)
+        configModel["path"] = backup_path
+        douyin_logger.info(f"使用备选保存路径: {configModel['path']}")
 
     # 初始化下载器
     dy = Douyin(database=configModel["database"])
@@ -389,24 +406,32 @@ def handle_aweme_download(dy, dl, key):
     """处理单个作品下载"""
     douyin_logger.info("[  提示  ]:正在请求单个作品")
     
-    # 最大重试次数
-    max_retries = 3
+    # 最大重试次数和等待时间
+    max_retries = 5  # 增加重试次数
     retry_count = 0
+    base_wait_time = 8  # 增加基础等待时间
     
     while retry_count < max_retries:
         try:
-            douyin_logger.info(f"[  提示  ]:第 {retry_count+1} 次尝试获取作品信息")
+            # 计算指数退避等待时间
+            wait_time = base_wait_time * (2 ** retry_count)
+            douyin_logger.info(f"[  提示  ]:第 {retry_count+1}/{max_retries} 次尝试获取作品信息")
+            
+            # 添加随机延迟，避免请求过于规律被限制
+            jitter = random.uniform(0.5, 1.5)
+            time.sleep(1 * jitter)  # 请求前短暂延迟
+            
             result = dy.getAwemeInfo(key)
             
             if not result:
-                douyin_logger.error("[  错误  ]:获取作品信息失败")
+                douyin_logger.error(f"[  错误  ]:获取作品信息失败 (尝试 {retry_count+1}/{max_retries})")
                 retry_count += 1
                 if retry_count < max_retries:
-                    douyin_logger.info("[  提示  ]:等待 5 秒后重试...")
-                    time.sleep(5)
+                    douyin_logger.info(f"[  提示  ]:等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
                 continue
             
-            # 直接使用返回的字典，不需要解包
+            # 直接使用返回的字典
             datanew = result
             
             if datanew:
@@ -416,11 +441,11 @@ def handle_aweme_download(dy, dl, key):
                 # 下载前检查视频URL
                 video_url = datanew.get("video", {}).get("play_addr", {}).get("url_list", [])
                 if not video_url or len(video_url) == 0:
-                    douyin_logger.error("[  错误  ]:无法获取视频URL")
+                    douyin_logger.error(f"[  错误  ]:无法获取视频URL (尝试 {retry_count+1}/{max_retries})")
                     retry_count += 1
                     if retry_count < max_retries:
-                        douyin_logger.info("[  提示  ]:等待 5 秒后重试...")
-                        time.sleep(5)
+                        douyin_logger.info(f"[  提示  ]:等待 {wait_time} 秒后重试...")
+                        time.sleep(wait_time)
                     continue
                     
                 douyin_logger.info(f"[  提示  ]:获取到视频URL，准备下载")
@@ -428,21 +453,25 @@ def handle_aweme_download(dy, dl, key):
                 douyin_logger.info(f"[  成功  ]:视频下载完成")
                 return True
             else:
-                douyin_logger.error("[  错误  ]:作品数据为空")
+                douyin_logger.error(f"[  错误  ]:作品数据为空 (尝试 {retry_count+1}/{max_retries})")
                 
             retry_count += 1
             if retry_count < max_retries:
-                douyin_logger.info("[  提示  ]:等待 5 秒后重试...")
-                time.sleep(5)
+                douyin_logger.info(f"[  提示  ]:等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
                 
         except Exception as e:
-            douyin_logger.error(f"[  错误  ]:处理作品时出错: {str(e)}")
+            douyin_logger.error(f"[  错误  ]:处理作品时出错: {str(e)} (尝试 {retry_count+1}/{max_retries})")
             retry_count += 1
             if retry_count < max_retries:
-                douyin_logger.info("[  提示  ]:等待 5 秒后重试...")
-                time.sleep(5)
+                # 计算指数退避等待时间
+                wait_time = base_wait_time * (2 ** retry_count)
+                douyin_logger.info(f"[  提示  ]:等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
     
     douyin_logger.error("[  失败  ]:已达到最大重试次数，无法下载视频")
+    douyin_logger.info("[  提示  ]:请检查网络连接或者尝试更新Cookie")
+    return False
 
 def handle_live_download(dy, dl, key):
     """处理直播下载"""

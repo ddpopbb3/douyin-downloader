@@ -104,13 +104,27 @@ class Download(object):
             
         try:
             # 创建保存目录
-            save_path = Path(savePath)
-            save_path.mkdir(parents=True, exist_ok=True)
+            save_path = Path(savePath) if not isinstance(savePath, Path) else savePath
+            try:
+                save_path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                self.console.print(f"[red]❌ 创建目录失败: {save_path}\n   {str(e)}[/]")
+                # 尝试使用备选路径
+                backup_path = Path(os.getcwd()) / "Downloaded"
+                backup_path.mkdir(parents=True, exist_ok=True)
+                save_path = backup_path
+                self.console.print(f"[yellow]⚠️  使用备选路径: {save_path}[/]")
             
             # 构建文件名
             file_name = f"{awemeDict['create_time']}_{utils.replaceStr(awemeDict['desc'])}"
             aweme_path = save_path / file_name if self.folderstyle else save_path
-            aweme_path.mkdir(exist_ok=True)
+            try:
+                aweme_path.mkdir(exist_ok=True)
+            except Exception as e:
+                self.console.print(f"[red]❌ 创建子目录失败: {aweme_path}\n   {str(e)}[/]")
+                # 如果子目录创建失败，使用父目录
+                aweme_path = save_path
+                self.console.print(f"[yellow]⚠️  使用父目录: {aweme_path}[/]")
             
             # 保存JSON数据
             if self.resjson:
@@ -136,8 +150,19 @@ class Download(object):
             self.console.print("[yellow]⚠️  没有找到可下载的内容[/]")
             return
 
-        save_path = Path(savePath)
-        save_path.mkdir(parents=True, exist_ok=True)
+        # 确保保存路径是Path对象
+        save_path = Path(savePath) if not isinstance(savePath, Path) else savePath
+        
+        # 确保目录存在
+        try:
+            save_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            self.console.print(f"[red]❌ 创建目录失败: {save_path}\n   {str(e)}[/]")
+            # 尝试使用备选路径
+            backup_path = Path(os.getcwd()) / "Downloaded"
+            backup_path.mkdir(parents=True, exist_ok=True)
+            save_path = backup_path
+            self.console.print(f"[yellow]⚠️  使用备选路径: {save_path}[/]")
 
         start_time = time.time()
         total_count = len(awemeList)

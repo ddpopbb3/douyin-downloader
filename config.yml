@@ -22,7 +22,8 @@ link:
   # - https://www.douyin.com/user/MS4wLjABAAAAXrGDowccDgJnarm2l95p80ojY5UpD-4VE_4WJwXcjvAMzQ79Ol1xizyLH8W3lgPX
   - https://www.douyin.com/user/MS4wLjABAAAA6O7EZyfDRYXxJrUTpf91K3tmB4rBROkAw-nYMfld8ss
 
-# 下载保存位置, 默认当前文件位置
+# 下载保存位置, 默认为当前目录下的Downloaded文件夹
+# 可以修改为任意有效路径，例如: "D:/Videos/DouYin/" 或 "./MyDownloads/"
 # 必选
 path: ./Downloaded/
 
@@ -44,7 +45,7 @@ json: True
 
 
 # 下载时间范围
-start_time: "2024-12-29"
+start_time: "2024-12-30"
 end_time: "2024-12-30"
 
 
