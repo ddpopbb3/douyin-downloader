@@ -122,7 +122,7 @@ class Douyin(object):
     # @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def getAwemeInfo(self, aweme_id: str) -> dict:
         """获取作品信息（带重试机制）"""
-        retries = 8  # 进一步增加重试次数
+        retries = 10  # 增加重试次数
         for attempt in range(retries):
             try:
                 logger.info(f'[  提示  ]:正在请求的作品 id = {aweme_id} (尝试 {attempt+1}/{retries})')
@@ -130,12 +130,19 @@ class Douyin(object):
                     return {}
 
                 # 增加随机延迟，避免请求过于规律被限制
-                jitter = random.uniform(1.5, 4.0) * (1 + (attempt * 0.2))  # 随着重试次数增加延迟
+                jitter = random.uniform(2.0, 5.0) * (1 + (attempt * 0.3))  # 随着重试次数增加延迟
                 time.sleep(jitter)  # 请求前随机延迟
 
-                # 构建请求URL
-                jx_url = self.urls.POST_DETAIL + utils.getXbogus(
-                    f'aweme_id={aweme_id}&device_platform=webapp&aid=6383')
+                # 构建请求URL，尝试不同的参数组合
+                query_params = [
+                    f'aweme_id={aweme_id}&device_platform=webapp&aid=6383',
+                    f'aweme_id={aweme_id}&device_platform=webapp&version_code=170400&version_name=17.4.0&aid=6383',
+                    f'aweme_id={aweme_id}&device_platform=webapp&aid=6383&version_name=23.5.0'
+                ]
+                
+                # 选择一个参数组合
+                param_index = attempt % len(query_params)
+                jx_url = self.urls.POST_DETAIL + utils.getXbogus(query_params[param_index])
                 
                 # 更新请求头，添加更多浏览器特征
                 headers = copy.deepcopy(douyin_headers)
@@ -152,23 +159,46 @@ class Douyin(object):
                 
                 # 生成新的随机Cookie值
                 new_msToken = utils.generate_random_str(107)
-                headers['Cookie'] = f"{headers.get('Cookie', '')};msToken={new_msToken};"
+                new_odin_tt = utils.generate_random_str(64)
+                new_passport_csrf_token = utils.generate_random_str(32)
+                new_sessionid = utils.generate_random_str(32)
+                
+                # 构建更完整的Cookie
+                headers['Cookie'] = f"{headers.get('Cookie', '')};"
+                headers['Cookie'] += f"msToken={new_msToken};"
+                headers['Cookie'] += f"odin_tt={new_odin_tt};"
+                headers['Cookie'] += f"passport_csrf_token={new_passport_csrf_token};"
+                headers['Cookie'] += f"sessionid={new_sessionid};"
                 
                 # 尝试使用不同的User-Agent
-                if attempt > 0 and attempt % 2 == 0:
-                    user_agents = [
-                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    ]
-                    headers['User-Agent'] = random.choice(user_agents)
+                user_agents = [
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+                    'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+                ]
+                
+                # 每次尝试使用不同的User-Agent
+                headers['User-Agent'] = user_agents[attempt % len(user_agents)]
+                
+                # 如果是移动设备UA，相应地修改其他头信息
+                if 'iPhone' in headers['User-Agent'] or 'iPad' in headers['User-Agent']:
+                    headers['sec-ch-ua-mobile'] = '?1'
+                    headers['sec-ch-ua-platform'] = '"iOS"'
                 
                 # 使用session保持连接
                 session = requests.Session()
                 
                 try:
                     # 增加超时参数和错误处理，随着重试次数增加超时时间
-                    timeout = 15 + (attempt * 5)
+                    timeout = 20 + (attempt * 5)
+                    
+                    # 添加请求前的日志
+                    logger.info(f"请求URL: {jx_url[:100]}...")
+                    logger.info(f"使用User-Agent: {headers['User-Agent'][:50]}...")
+                    
+                    # 发送请求
                     response = session.get(url=jx_url, headers=headers, timeout=timeout)
                     
                     # 检查HTTP状态码
@@ -179,43 +209,10 @@ class Douyin(object):
                     # 检查响应内容是否为空
                     if not response.text or response.text.isspace():
                         logger.warning("收到空响应")
-                        # 尝试使用多个备用URL和参数
-                        backup_urls = [
-                            f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp&version_code=170400&version_name=17.4.0",
-                            f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp&aid=6383",
-                            f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={aweme_id}&device_platform=webapp"
-                        ]
-                        
-                        backup_response = None
-                        for i, backup_url in enumerate(backup_urls):
-                            try:
-                                logger.info(f"尝试使用备用URL {i+1}/{len(backup_urls)}")
-                                # 添加X-Bogus参数
-                                query_part = backup_url.split('?')[1]
-                                backup_url_with_xbogus = backup_url + "&" + utils.getXbogus(query_part)
-                                
-                                # 修改User-Agent，交替使用移动设备和桌面设备
-                                backup_headers = copy.deepcopy(headers)
-                                if i % 2 == 0:
-                                    backup_headers['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
-                                    backup_headers['sec-ch-ua-mobile'] = '?1'
-                                    backup_headers['sec-ch-ua-platform'] = '"iOS"'
-                                
-                                # 添加随机延迟
-                                time.sleep(random.uniform(1.0, 2.0))
-                                
-                                temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout)
-                                if temp_response.status_code == 200 and temp_response.text and not temp_response.text.isspace():
-                                    backup_response = temp_response
-                                    logger.info(f"备用URL {i+1} 请求成功")
-                                    break
-                            except Exception as e:
-                                logger.warning(f"备用URL {i+1} 请求失败: {str(e)}")
-                        
-                        if backup_response:
-                            response = backup_response
-                        else:
-                            raise ValueError("所有备用URL请求均失败")
+                        raise ValueError("空响应")
+                    
+                    # 记录响应长度
+                    logger.info(f"收到响应，长度: {len(response.text)} 字节")
                     
                     # 尝试解析JSON
                     try:
@@ -226,9 +223,19 @@ class Douyin(object):
                         raise
                     
                     # 验证API返回状态
-                    if datadict is None or datadict.get("status_code") != 0:
-                        status_msg = datadict.get("status_msg", "未知错误") if datadict else "空数据"
+                    if datadict is None:
+                        logger.warning("API返回空数据")
+                        raise ValueError("API返回空数据")
+                        
+                    if datadict.get("status_code") != 0:
+                        status_msg = datadict.get("status_msg", "未知错误")
                         logger.warning(f"API返回错误: {status_msg}")
+                        
+                        # 如果是限流或需要登录的错误，增加等待时间
+                        if "频繁" in status_msg or "登录" in status_msg or "拦截" in status_msg:
+                            logger.warning("检测到限流或需要登录，增加等待时间")
+                            time.sleep(random.uniform(10.0, 20.0))
+                            
                         raise ValueError(f"API错误: {status_msg}")
                     
                     # 验证是否包含必要的数据
@@ -245,9 +252,17 @@ class Douyin(object):
                         awemeType = 1  # 图集
                     
                     # 转换成我们自己的格式
-                    self.result.dataConvert(awemeType, self.result.awemeDict, datadict['aweme_detail'])
-                    logger.info(f"成功获取作品信息: ID={aweme_id}")
-                    return self.result.awemeDict
+                    try:
+                        self.result.dataConvert(awemeType, self.result.awemeDict, datadict['aweme_detail'])
+                        logger.info(f"成功获取作品信息: ID={aweme_id}")
+                        return self.result.awemeDict
+                    except Exception as e:
+                        logger.error(f"数据转换失败: {str(e)}")
+                        # 保存原始数据以便调试
+                        with open(f"debug_aweme_{aweme_id}.json", "w", encoding="utf-8") as f:
+                            json.dump(datadict, f, ensure_ascii=False, indent=2)
+                        logger.info(f"已保存原始数据到debug_aweme_{aweme_id}.json")
+                        raise
                     
                 except (json.JSONDecodeError, KeyError, ValueError) as e:
                     # 特定错误处理
@@ -267,8 +282,8 @@ class Douyin(object):
                 logger.error(f"获取作品信息失败 (尝试 {attempt+1}/{retries}): {str(e)}")
             
             # 指数退避等待，但添加随机性
-            base_wait_time = min(30, 5 * (2 ** attempt))  # 基础等待时间
-            jitter = random.uniform(0.8, 1.2)  # 添加20%的随机波动
+            base_wait_time = min(45, 8 * (2 ** min(attempt, 3)))  # 基础等待时间，但限制最大值
+            jitter = random.uniform(0.8, 1.5)  # 添加随机波动
             wait_time = base_wait_time * jitter
             logger.warning(f"等待{wait_time:.1f}秒后重试...")
             time.sleep(wait_time)
@@ -307,7 +322,7 @@ class Douyin(object):
         awemeList = []
         total_fetched = 0
         filtered_count = 0
-        max_retries = 5  # 最大重试次数
+        max_retries = 8  # 增加最大重试次数
         
         with Progress(
             SpinnerColumn(),
@@ -329,19 +344,29 @@ class Douyin(object):
                 
                 while retry_count < max_retries and not success:
                     try:
-                        # 构建请求URL
+                        # 构建请求URL，尝试不同的参数组合
                         if mode == "post":
-                            url = self.urls.USER_POST + utils.getXbogus(
-                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383')
+                            # 为post模式准备多种参数组合
+                            query_params = [
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_code=170400&version_name=17.4.0',
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383',
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&version_code=170400&version_name=17.4.0'
+                            ]
+                            param_index = retry_count % len(query_params)
+                            url = self.urls.USER_POST + utils.getXbogus(query_params[param_index])
                         elif mode == "like":
-                            url = self.urls.USER_FAVORITE_A + utils.getXbogus(
-                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383')
+                            query_params = [
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383',
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_code=170400'
+                            ]
+                            param_index = retry_count % len(query_params)
+                            url = self.urls.USER_FAVORITE_A + utils.getXbogus(query_params[param_index])
                         else:
                             self.console.print("[red]❌ 模式选择错误，仅支持post、like[/]")
                             return None
 
                         # 添加随机延迟，避免请求过于规律被限制
-                        jitter = random.uniform(0.5, 2.0) * (retry_count + 1)
+                        jitter = random.uniform(1.5, 3.0) * (retry_count + 1)
                         if retry_count > 0:
                             logger.info(f"第{retry_count+1}次重试，等待{jitter:.1f}秒...")
                             time.sleep(jitter)
@@ -354,21 +379,57 @@ class Douyin(object):
                         headers['Accept'] = 'application/json, text/plain, */*'
                         headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
                         headers['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120"'
-                        headers['sec-ch-ua-mobile'] = '?0'
-                        headers['sec-ch-ua-platform'] = '"macOS"'
                         headers['Referer'] = 'https://www.douyin.com/'
                         headers['Origin'] = 'https://www.douyin.com'
                         
                         # 生成新的随机Cookie值
                         new_msToken = utils.generate_random_str(107)
-                        headers['Cookie'] = f"{headers.get('Cookie', '')};msToken={new_msToken};"
+                        new_odin_tt = utils.generate_random_str(64)
+                        new_passport_csrf_token = utils.generate_random_str(32)
+                        new_sessionid = utils.generate_random_str(32)
                         
-                        # 尝试使用不同的User-Agent
-                        if retry_count > 0 and retry_count % 2 == 0:
-                            headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        # 构建更完整的Cookie
+                        headers['Cookie'] = f"{headers.get('Cookie', '')};"
+                        headers['Cookie'] += f"msToken={new_msToken};"
+                        headers['Cookie'] += f"odin_tt={new_odin_tt};"
+                        headers['Cookie'] += f"passport_csrf_token={new_passport_csrf_token};"
+                        headers['Cookie'] += f"sessionid={new_sessionid};"
                         
-                        # 增加超时参数
-                        res = session.get(url=url, headers=headers, timeout=15)
+                        # 为post模式添加更多请求头参数
+                        if mode == "post":
+                            headers['x-secsdk-csrf-token'] = utils.generate_random_str(32)
+                            headers['x-tt-trace-id'] = utils.generate_random_str(32)
+                            headers['x-tt-params'] = utils.generate_random_str(128)
+                        
+                        # 使用不同的User-Agent
+                        user_agents = [
+                            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+                            'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+                        ]
+                        
+                        # 每次尝试使用不同的User-Agent
+                        headers['User-Agent'] = user_agents[retry_count % len(user_agents)]
+                        
+                        # 如果是移动设备UA，相应地修改其他头信息
+                        if 'iPhone' in headers['User-Agent'] or 'iPad' in headers['User-Agent']:
+                            headers['sec-ch-ua-mobile'] = '?1'
+                            headers['sec-ch-ua-platform'] = '"iOS"'
+                        else:
+                            headers['sec-ch-ua-mobile'] = '?0'
+                            headers['sec-ch-ua-platform'] = '"macOS"'
+                        
+                        # 增加超时参数，随着重试次数增加超时时间
+                        timeout = 20 + (retry_count * 5)
+                        
+                        # 添加请求前的日志
+                        logger.info(f"请求URL: {url[:100]}...")
+                        logger.info(f"使用User-Agent: {headers['User-Agent'][:50]}...")
+                        
+                        # 发送请求
+                        res = session.get(url=url, headers=headers, timeout=timeout)
                         
                         # 检查HTTP状态码
                         if res.status_code != 200:
@@ -384,17 +445,89 @@ class Douyin(object):
                         datadict = json.loads(res.text)
                         
                         # 处理返回数据
-                        if not datadict or datadict.get("status_code") != 0:
+                        if not datadict:
+                            logger.warning("API返回空数据")
+                            raise ValueError("API返回空数据")
+                            
+                        if datadict.get("status_code") != 0:
                             status_msg = datadict.get('status_msg', '未知错误')
                             logger.warning(f"API返回错误: {status_msg}")
+                            
+                            # 针对post模式的特殊处理
+                            if mode == "post" and "请求太频繁" in str(status_msg):
+                                logger.warning("检测到请求频率限制，增加等待时间")
+                                time.sleep(random.uniform(3.0, 5.0) * (retry_count + 1))
+                            elif mode == "post" and ("登录" in str(status_msg) or "授权" in str(status_msg)):
+                                logger.warning("可能需要更新Cookie")
+                            
                             raise ValueError(f"API错误: {status_msg}")
+                        
+                        # 检查是否包含必要的数据
+                        if "aweme_list" not in datadict or not isinstance(datadict["aweme_list"], list):
+                            logger.warning("API响应中缺少aweme_list字段或格式不正确")
+                            raise KeyError("缺少有效的aweme_list字段")
                             
                         # 如果执行到这里，说明请求成功
                         success = True
+                        has_more = datadict.get('has_more', False)
+                        max_cursor = datadict.get('max_cursor', 0)
+                        
+                        # 记录成功获取的数据信息
+                        logger.info(f"成功获取数据: 模式={mode}, 用户ID={sec_uid}, 游标={max_cursor}, 作品数量={len(datadict['aweme_list'])}, 是否有更多={has_more}")
                         
                     except json.JSONDecodeError as e:
                         logger.error(f"JSON解析失败: {str(e)}")
                         logger.debug(f"响应内容前100个字符: {res.text[:100] if hasattr(res, 'text') else '无响应内容'}")
+                        
+                        # 保存原始响应以便调试
+                        debug_file = f"debug_user_{sec_uid}_cursor_{max_cursor}.txt"
+                        try:
+                            with open(debug_file, "w", encoding="utf-8") as f:
+                                f.write(res.text[:2000] if hasattr(res, 'text') else '无响应内容')  # 只保存前2000个字符避免文件过大
+                            logger.info(f"已保存原始响应到{debug_file}")
+                        except Exception as debug_err:
+                            logger.warning(f"保存调试文件失败: {str(debug_err)}")
+                        
+                        # 尝试使用备用URL和参数组合，特别是针对post模式
+                        if mode == "post" and retry_count < max_retries - 1:
+                            try:
+                                logger.info("尝试使用备用URL和参数组合")
+                                backup_urls = [
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_code=170400&version_name=17.4.0",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webcast&aid=6383"
+                                ]
+                                
+                                for i, backup_url in enumerate(backup_urls):
+                                    try:
+                                        logger.info(f"尝试备用URL {i+1}/{len(backup_urls)}")
+                                        # 添加X-Bogus参数
+                                        query_part = backup_url.split('?')[1]
+                                        backup_url_with_xbogus = backup_url + "&" + utils.getXbogus(query_part).split('?')[1]
+                                        
+                                        # 修改User-Agent
+                                        backup_headers = copy.deepcopy(headers)
+                                        backup_headers['User-Agent'] = user_agents[i % len(user_agents)]
+                                        
+                                        # 添加随机延迟
+                                        time.sleep(random.uniform(1.0, 2.0))
+                                        
+                                        temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout)
+                                        if temp_response.status_code == 200 and temp_response.text and not temp_response.text.isspace():
+                                            try:
+                                                temp_data = json.loads(temp_response.text)
+                                                if temp_data and temp_data.get("status_code") == 0 and "aweme_list" in temp_data:
+                                                    logger.info(f"备用URL {i+1} 请求成功")
+                                                    datadict = temp_data
+                                                    success = True
+                                                    break
+                                            except json.JSONDecodeError:
+                                                pass
+                                    except Exception as e:
+                                        logger.warning(f"备用URL {i+1} 请求失败: {str(e)}")
+                            except Exception as e:
+                                logger.warning(f"备用URL处理失败: {str(e)}")
+                        
                         retry_count += 1
                     except (RequestException, ValueError) as e:
                         logger.error(f"请求失败: {str(e)}")
@@ -671,10 +804,65 @@ class Douyin(object):
                             
                         # 如果执行到这里，说明请求成功
                         success = True
+                        has_more = datadict.get('has_more', False)
+                        max_cursor = datadict.get('max_cursor', 0)
+                        
+                        # 记录成功获取的数据信息
+                        logger.info(f"成功获取数据: 模式={mode}, 用户ID={sec_uid}, 游标={max_cursor}, 作品数量={len(datadict['aweme_list'])}, 是否有更多={has_more}")
                         
                     except json.JSONDecodeError as e:
                         logger.error(f"JSON解析失败: {str(e)}")
                         logger.debug(f"响应内容前100个字符: {res.text[:100] if hasattr(res, 'text') else '无响应内容'}")
+                        
+                        # 保存原始响应以便调试
+                        debug_file = f"debug_user_{sec_uid}_cursor_{max_cursor}.txt"
+                        try:
+                            with open(debug_file, "w", encoding="utf-8") as f:
+                                f.write(res.text[:2000] if hasattr(res, 'text') else '无响应内容')  # 只保存前2000个字符避免文件过大
+                            logger.info(f"已保存原始响应到{debug_file}")
+                        except Exception as debug_err:
+                            logger.warning(f"保存调试文件失败: {str(debug_err)}")
+                        
+                        # 尝试使用备用URL和参数组合，特别是针对post模式
+                        if mode == "post" and retry_count < max_retries - 1:
+                            try:
+                                logger.info("尝试使用备用URL和参数组合")
+                                backup_urls = [
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_code=170400&version_name=17.4.0",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webcast&aid=6383"
+                                ]
+                                
+                                for i, backup_url in enumerate(backup_urls):
+                                    try:
+                                        logger.info(f"尝试备用URL {i+1}/{len(backup_urls)}")
+                                        # 添加X-Bogus参数
+                                        query_part = backup_url.split('?')[1]
+                                        backup_url_with_xbogus = backup_url + "&" + utils.getXbogus(query_part).split('?')[1]
+                                        
+                                        # 修改User-Agent
+                                        backup_headers = copy.deepcopy(headers)
+                                        backup_headers['User-Agent'] = user_agents[i % len(user_agents)]
+                                        
+                                        # 添加随机延迟
+                                        time.sleep(random.uniform(1.0, 2.0))
+                                        
+                                        temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout)
+                                        if temp_response.status_code == 200 and temp_response.text and not temp_response.text.isspace():
+                                            try:
+                                                temp_data = json.loads(temp_response.text)
+                                                if temp_data and temp_data.get("status_code") == 0 and "aweme_list" in temp_data:
+                                                    logger.info(f"备用URL {i+1} 请求成功")
+                                                    datadict = temp_data
+                                                    success = True
+                                                    break
+                                            except json.JSONDecodeError:
+                                                pass
+                                    except Exception as e:
+                                        logger.warning(f"备用URL {i+1} 请求失败: {str(e)}")
+                            except Exception as e:
+                                logger.warning(f"备用URL处理失败: {str(e)}")
+                        
                         retry_count += 1
                     except (RequestException, ValueError) as e:
                         logger.error(f"请求失败: {str(e)}")

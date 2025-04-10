@@ -46,8 +46,8 @@ json: True
 
 
 # 下载时间范围
-start_time: "2024-05-08"
-end_time: "2024-10-09"
+start_time: "2025-01-01"
+end_time: "2025-01-01"
 
 
 folderstyle: True # True -> 每个视频是一个单独的文件夹; False -> 所有视频共用一个文件夹
