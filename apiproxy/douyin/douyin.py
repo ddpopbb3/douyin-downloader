@@ -148,23 +148,44 @@ class Douyin(object):
                 headers = copy.deepcopy(douyin_headers)
                 headers['Accept'] = 'application/json, text/plain, */*'
                 headers['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
-                headers['Referer'] = f'https://www.douyin.com/video/{aweme_id}'
                 headers['sec-ch-ua'] = '"Not_A Brand";v="8", "Chromium";v="120"'
-                headers['sec-ch-ua-mobile'] = '?0'
-                headers['sec-ch-ua-platform'] = '"macOS"'
+                headers['Referer'] = f'https://www.douyin.com/user/{sec_uid}'
+                headers['Origin'] = 'https://www.douyin.com'
+                headers['Accept-Encoding'] = 'gzip, deflate, br'
+                headers['Connection'] = 'keep-alive'
+                headers['Pragma'] = 'no-cache'
+                headers['Cache-Control'] = 'no-cache'
                 headers['sec-fetch-dest'] = 'empty'
                 headers['sec-fetch-mode'] = 'cors'
                 headers['sec-fetch-site'] = 'same-origin'
-                headers['Origin'] = 'https://www.douyin.com'
                 
                 # 生成新的随机Cookie值
                 new_msToken = utils.generate_random_str(107)
                 new_odin_tt = utils.generate_random_str(64)
                 new_passport_csrf_token = utils.generate_random_str(32)
                 new_sessionid = utils.generate_random_str(32)
+                new_ttreq = utils.generate_random_str(32)
+                new_install_id = str(random.randint(1000000000, 9999999999))
                 
                 # 构建更完整的Cookie
-                headers['Cookie'] = f"{headers.get('Cookie', '')};"
+                cookie_str = (
+                    f"msToken={new_msToken}; "
+                    f"odin_tt={new_odin_tt}; "
+                    f"passport_csrf_token={new_passport_csrf_token}; "
+                    f"sessionid={new_sessionid}; "
+                    f"ttreq={new_ttreq}; "
+                    f"install_id={new_install_id}; "
+                    f"passport_auth_status=1; "
+                    f"d_ticket=1; "
+                    f"sid_tt=1; "
+                    f"uid_tt=1; "
+                    f"sid_ucp_v1=1; "
+                    f"ssid_ucp_v1=1"
+                )
+                
+                # 设置新的Cookie
+                headers['Cookie'] = cookie_str
+                headers['Cookie'] += f"{headers.get('Cookie', '')};"
                 headers['Cookie'] += f"msToken={new_msToken};"
                 headers['Cookie'] += f"odin_tt={new_odin_tt};"
                 headers['Cookie'] += f"passport_csrf_token={new_passport_csrf_token};"
@@ -210,6 +231,15 @@ class Douyin(object):
                     if not response.text or response.text.isspace():
                         logger.warning("收到空响应")
                         raise ValueError("空响应")
+                    
+                    # 检查响应是否为二进制或加密数据
+                    if res.text and len(res.text) > 0 and not res.text.strip().startswith('{'):
+                        logger.warning("收到非JSON格式响应，可能是加密数据")
+                        # 保存原始响应以便调试
+                        with open(f"debug_user_{sec_uid}_cursor_{max_cursor}.txt", "wb") as f:
+                            f.write(res.content)
+                        logger.info(f"已保存原始响应到debug_user_{sec_uid}_cursor_{max_cursor}.txt")
+                        raise ValueError("非JSON格式响应")
                     
                     # 记录响应长度
                     logger.info(f"收到响应，长度: {len(response.text)} 字节")
@@ -322,7 +352,10 @@ class Douyin(object):
         awemeList = []
         total_fetched = 0
         filtered_count = 0
-        max_retries = 8  # 增加最大重试次数
+        max_retries = 10  # 增加最大重试次数
+        max_pages = 15    # 最大页数限制，防止无限循环
+        current_page = 0  # 当前页数计数
+        consecutive_failures = 0  # 连续失败计数
         
         with Progress(
             SpinnerColumn(),
@@ -338,9 +371,15 @@ class Douyin(object):
                 total=None  # 总数未知，使用无限进度条
             )
             
-            while True:
+            while True and current_page < max_pages:
+                current_page += 1
                 retry_count = 0
                 success = False
+                
+                # 如果连续失败次数过多，提前退出
+                if consecutive_failures >= 3:
+                    self.console.print(f"[yellow]⚠️ 连续{consecutive_failures}次请求失败，停止获取更多作品[/]")
+                    break
                 
                 while retry_count < max_retries and not success:
                     try:
@@ -350,7 +389,13 @@ class Douyin(object):
                             query_params = [
                                 f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_code=170400&version_name=17.4.0',
                                 f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383',
-                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&version_code=170400&version_name=17.4.0'
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&version_code=170400&version_name=17.4.0',
+                                # 添加更多参数组合
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webcast&aid=6383',
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_name=23.5.0',
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_name=23.5.0&channel=douyin_web',
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&channel=channel_pc_web',
+                                f'sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&cookie_enabled=true&platform=PC&downlink=10'
                             ]
                             param_index = retry_count % len(query_params)
                             url = self.urls.USER_POST + utils.getXbogus(query_params[param_index])
@@ -441,8 +486,26 @@ class Douyin(object):
                             logger.warning("收到空响应")
                             raise ValueError("空响应")
                         
+                        # 检查响应是否为二进制或加密数据
+                        if res.text and len(res.text) > 0 and not res.text.strip().startswith('{'):
+                            logger.warning("收到非JSON格式响应，可能是加密数据")
+                            # 保存原始响应以便调试
+                            with open(f"debug_user_{sec_uid}_cursor_{max_cursor}.txt", "wb") as f:
+                                f.write(res.content)
+                            logger.info(f"已保存原始响应到debug_user_{sec_uid}_cursor_{max_cursor}.txt")
+                            raise ValueError("非JSON格式响应")
+                        
                         # 尝试解析JSON
-                        datadict = json.loads(res.text)
+                        try:
+                            datadict = json.loads(res.text)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"JSON解析失败: {str(e)}")
+                            # 保存原始响应以便调试
+                            debug_file = f"debug_user_{sec_uid}_cursor_{max_cursor}.txt"
+                            with open(debug_file, "wb") as f:
+                                f.write(res.content)
+                            logger.info(f"已保存原始响应到{debug_file}")
+                            raise
                         
                         # 处理返回数据
                         if not datadict:
@@ -454,9 +517,9 @@ class Douyin(object):
                             logger.warning(f"API返回错误: {status_msg}")
                             
                             # 针对post模式的特殊处理
-                            if mode == "post" and "请求太频繁" in str(status_msg):
+                            if mode == "post" and ("请求太频繁" in str(status_msg) or "拦截" in str(status_msg)):
                                 logger.warning("检测到请求频率限制，增加等待时间")
-                                time.sleep(random.uniform(3.0, 5.0) * (retry_count + 1))
+                                time.sleep(random.uniform(5.0, 10.0) * (retry_count + 1))
                             elif mode == "post" and ("登录" in str(status_msg) or "授权" in str(status_msg)):
                                 logger.warning("可能需要更新Cookie")
                             
@@ -495,7 +558,9 @@ class Douyin(object):
                                 backup_urls = [
                                     f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_code=170400&version_name=17.4.0",
                                     f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383",
-                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webcast&aid=6383"
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webcast&aid=6383",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_name=23.5.0",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_name=23.5.0&channel=douyin_web"
                                 ]
                                 
                                 for i, backup_url in enumerate(backup_urls):
@@ -509,10 +574,17 @@ class Douyin(object):
                                         backup_headers = copy.deepcopy(headers)
                                         backup_headers['User-Agent'] = user_agents[i % len(user_agents)]
                                         
-                                        # 添加随机延迟
-                                        time.sleep(random.uniform(1.0, 2.0))
+                                        # 添加随机延迟，增加延迟时间以避免频率限制
+                                        time.sleep(random.uniform(3.0, 5.0) * (i + 1))
                                         
-                                        temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout)
+                                        # 增加请求头多样性
+                                        backup_headers['Accept-Encoding'] = 'gzip, deflate, br'
+                                        backup_headers['Connection'] = 'keep-alive'
+                                        backup_headers['Pragma'] = 'no-cache'
+                                        backup_headers['Cache-Control'] = 'no-cache'
+                                        
+                                        # 发送请求，增加重试次数
+                                        temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout + (i * 5))
                                         if temp_response.status_code == 200 and temp_response.text and not temp_response.text.isspace():
                                             try:
                                                 temp_data = json.loads(temp_response.text)
@@ -538,8 +610,23 @@ class Douyin(object):
                 
                 # 如果所有重试都失败了
                 if not success:
+                    consecutive_failures += 1  # 增加连续失败计数
                     self.console.print(f"[red]❌ 网络请求失败: 已重试{max_retries}次[/]")
-                    break
+                    
+                    # 如果是第一页就失败，直接退出
+                    if current_page == 1 and len(awemeList) == 0:
+                        break
+                        
+                    # 尝试跳过当前游标，继续获取下一页
+                    if datadict and "max_cursor" in datadict:
+                        max_cursor = datadict["max_cursor"]
+                        logger.info(f"尝试跳过当前游标 {max_cursor}，继续获取下一页")
+                        continue
+                    else:
+                        # 如果无法获取下一页游标，尝试增加当前游标值
+                        max_cursor += count * 10000  # 大致估算下一页游标
+                        logger.info(f"无法获取下一页游标，尝试使用估算值: {max_cursor}")
+                        continue
                     
                 # 请求成功，处理数据
                 try:
@@ -601,6 +688,7 @@ class Douyin(object):
                     max_cursor = datadict["max_cursor"]
                     
                 except Exception as e:
+                    consecutive_failures += 1  # 增加连续失败计数
                     self.console.print(f"[red]❌ 获取作品列表出错: {str(e)}[/]")
                     break
 
@@ -789,8 +877,26 @@ class Douyin(object):
                             logger.warning("收到空响应")
                             raise ValueError("空响应")
                         
+                        # 检查响应是否为二进制或加密数据
+                        if res.text and len(res.text) > 0 and not res.text.strip().startswith('{'):
+                            logger.warning("收到非JSON格式响应，可能是加密数据")
+                            # 保存原始响应以便调试
+                            with open(f"debug_user_{sec_uid}_cursor_{max_cursor}.txt", "wb") as f:
+                                f.write(res.content)
+                            logger.info(f"已保存原始响应到debug_user_{sec_uid}_cursor_{max_cursor}.txt")
+                            raise ValueError("非JSON格式响应")
+                        
                         # 尝试解析JSON
-                        datadict = json.loads(res.text)
+                        try:
+                            datadict = json.loads(res.text)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"JSON解析失败: {str(e)}")
+                            # 保存原始响应以便调试
+                            debug_file = f"debug_user_{sec_uid}_cursor_{max_cursor}.txt"
+                            with open(debug_file, "wb") as f:
+                                f.write(res.content)
+                            logger.info(f"已保存原始响应到{debug_file}")
+                            raise
                         
                         if not datadict:
                             logger.warning("获取到空数据字典")
@@ -830,7 +936,9 @@ class Douyin(object):
                                 backup_urls = [
                                     f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_code=170400&version_name=17.4.0",
                                     f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383",
-                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webcast&aid=6383"
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webcast&aid=6383",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_name=23.5.0",
+                                    f"https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id={sec_uid}&count={count}&max_cursor={max_cursor}&device_platform=webapp&aid=6383&version_name=23.5.0&channel=douyin_web"
                                 ]
                                 
                                 for i, backup_url in enumerate(backup_urls):
@@ -844,10 +952,17 @@ class Douyin(object):
                                         backup_headers = copy.deepcopy(headers)
                                         backup_headers['User-Agent'] = user_agents[i % len(user_agents)]
                                         
-                                        # 添加随机延迟
-                                        time.sleep(random.uniform(1.0, 2.0))
+                                        # 添加随机延迟，增加延迟时间以避免频率限制
+                                        time.sleep(random.uniform(3.0, 5.0) * (i + 1))
                                         
-                                        temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout)
+                                        # 增加请求头多样性
+                                        backup_headers['Accept-Encoding'] = 'gzip, deflate, br'
+                                        backup_headers['Connection'] = 'keep-alive'
+                                        backup_headers['Pragma'] = 'no-cache'
+                                        backup_headers['Cache-Control'] = 'no-cache'
+                                        
+                                        # 发送请求，增加重试次数
+                                        temp_response = session.get(url=backup_url_with_xbogus, headers=backup_headers, timeout=timeout + (i * 5))
                                         if temp_response.status_code == 200 and temp_response.text and not temp_response.text.isspace():
                                             try:
                                                 temp_data = json.loads(temp_response.text)
